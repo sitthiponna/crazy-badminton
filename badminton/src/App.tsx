@@ -1,7 +1,11 @@
 import { useState } from "react";
 import "./App.css";
 
-type Player = string;
+type Player = {
+  name: string;
+  level: number;
+};
+
 type Pair = [Player, Player];
 
 type Match = {
@@ -28,6 +32,10 @@ function shuffle<T>(arr: T[]): T[] {
   return [...arr].sort(() => Math.random() - 0.5);
 }
 
+function teamLevel(pair: Pair) {
+  return pair[0].level + pair[1].level;
+}
+
 // ---------- Core ----------
 function generateRound(
   players: Player[],
@@ -38,18 +46,32 @@ function generateRound(
   const shuffled = shuffle(players);
   const pairs: Pair[] = [];
 
+  // 👉 สร้างคู่ก่อน (ห้ามซ้ำ)
   for (let i = 0; i < 8; i += 2) {
     const p1 = shuffled[i];
     const p2 = shuffled[i + 1];
-    const key = makePairKey(p1, p2);
+    const key = makePairKey(p1.name, p2.name);
 
     if (usedPairs.has(key)) return null;
 
     pairs.push([p1, p2]);
   }
 
+  // 👉 เช็ค balance match
+  const match1Diff = Math.abs(
+    teamLevel(pairs[0]) - teamLevel(pairs[1])
+  );
+  const match2Diff = Math.abs(
+    teamLevel(pairs[2]) - teamLevel(pairs[3])
+  );
+
+  if (match1Diff > 1 || match2Diff > 1) {
+    return null; // ไม่บาลานซ์
+  }
+
+  // 👉 save history
   pairs.forEach(([a, b]) => {
-    usedPairs.add(makePairKey(a, b));
+    usedPairs.add(makePairKey(a.name, b.name));
   });
 
   return {
@@ -65,7 +87,7 @@ function generateRound(
 function generateRoundWithRetry(
   players: Player[],
   usedPairs: Set<string>,
-  maxRetry = 500
+  maxRetry = 1000
 ): Round | null {
   for (let i = 0; i < maxRetry; i++) {
     const r = generateRound(players, usedPairs);
@@ -80,21 +102,31 @@ function App() {
   const [roundCount, setRoundCount] = useState(5);
   const [rounds, setRounds] = useState<Round[]>([]);
 
-  const handleGenerate = () => {
-    const players = input
+  const parsePlayers = (): Player[] => {
+    return input
       .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean);
+      .map((p) => {
+        const [name, level] = p.split(":");
+        return {
+          name: name.trim(),
+          level: Number(level),
+        };
+      })
+      .filter((p) => p.name && p.level >= 1 && p.level <= 3);
+  };
+
+  const handleGenerate = () => {
+    const players = parsePlayers();
 
     if (players.length !== 16) {
-      alert("ต้องมีผู้เล่น 16 คน");
+      alert("ต้องมี 16 คน และกำหนด level 1-3");
       return;
     }
 
     const usedPairs = new Set<string>();
     const result: Round[] = [];
 
-    let queue = shuffle(players); // 👉 สุ่มครั้งแรก
+    let queue = shuffle(players);
 
     for (let i = 0; i < roundCount; i++) {
       const playing = queue.slice(0, 8);
@@ -103,7 +135,7 @@ function App() {
       const r = generateRoundWithRetry(playing, usedPairs);
 
       if (!r) {
-        alert(`ตันที่รอบ ${i + 1}`);
+        alert(`ตันหรือบาลานซ์ไม่ได้ที่รอบ ${i + 1}`);
         break;
       }
 
@@ -112,7 +144,7 @@ function App() {
 
       result.push(r);
 
-      // 🔄 rotate
+      // rotate
       queue = [...resting, ...playing];
     }
 
@@ -121,13 +153,13 @@ function App() {
 
   return (
     <div style={{ padding: 20 }}>
-      <h1>🏸 Badminton Rotate Generator</h1>
+      <h1>🏸 Badminton Level Balance Generator</h1>
 
       {/* INPUT */}
       <div style={{ marginBottom: 20 }}>
         <input
-          style={{ width: "320px", padding: "8px" }}
-          placeholder="A,B,C,...,P"
+          style={{ width: "500px", padding: "8px" }}
+          placeholder="A:1,B:2,C:3,..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
@@ -165,9 +197,15 @@ function App() {
             <h4>Round {rIndex + 1}</h4>
 
             <p style={{ fontSize: 12 }}>
-              ▶ เล่น: {round.playing.join(", ")}
+              ▶ เล่น:{" "}
+              {round.playing
+                .map((p) => `${p.name}(${p.level})`)
+                .join(", ")}
               <br />
-              ⏸ พัก: {round.resting.join(", ")}
+              ⏸ พัก:{" "}
+              {round.resting
+                .map((p) => `${p.name}(${p.level})`)
+                .join(", ")}
             </p>
 
             <table border={1} cellPadding={6} width="100%">
@@ -179,19 +217,26 @@ function App() {
                 </tr>
               </thead>
               <tbody>
-                {round.courts.map((court, i) => (
-                  <tr key={i}>
-                    <td>{i + 1}</td>
-                    <td>
-                      {court.match.teamA[0]} /{" "}
-                      {court.match.teamA[1]}
-                    </td>
-                    <td>
-                      {court.match.teamB[0]} /{" "}
-                      {court.match.teamB[1]}
-                    </td>
-                  </tr>
-                ))}
+                {round.courts.map((court, i) => {
+                  const a = court.match.teamA;
+                  const b = court.match.teamB;
+
+                  return (
+                    <tr key={i}>
+                      <td>{i + 1}</td>
+                      <td>
+                        {a[0].name}({a[0].level}) /{" "}
+                        {a[1].name}({a[1].level}) ={" "}
+                        {teamLevel(a)}
+                      </td>
+                      <td>
+                        {b[0].name}({b[0].level}) /{" "}
+                        {b[1].name}({b[1].level}) ={" "}
+                        {teamLevel(b)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
